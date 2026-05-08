@@ -1,3 +1,14 @@
+---
+title: Sports_profile
+emoji: ⚡
+colorFrom: blue
+colorTo: red
+sdk: streamlit
+sdk_version: 1.35.0
+app_file: app.py
+pinned: false
+---
+
 # ⚡ SportsPulse — Multi-Sport Player Performance Profiling System
 
 > **Color palette:** Deep Royal Blue (#0F1566) · Bold Red (#E8293A) · White (#FFFFFF)  
