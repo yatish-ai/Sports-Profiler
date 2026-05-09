@@ -11,7 +11,7 @@ app_file: app.py
 pinned: false
 ---
 
->>>>>>> 769e80c07d40e4d90988c562afa97301d7cf07ca
+
 # ⚡ SportsPulse — Multi-Sport Player Performance Profiling System
 
 > **Color palette:** Deep Royal Blue (#0F1566) · Bold Red (#E8293A) · White (#FFFFFF)  
