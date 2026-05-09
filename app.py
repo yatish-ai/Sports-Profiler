@@ -21,7 +21,11 @@ from utils.visualizations import (
     radar_chart, line_chart, comparison_bar_chart,
     dual_radar_chart, form_gauge, mini_sparkline
 )
+<<<<<<< HEAD
 from api.data_fetcher import get_player_data_with_fallback, check_api_health, get_last_refresh_time, diagnose_api
+=======
+from api.data_fetcher import get_player_data_with_fallback, check_api_health, get_last_refresh_time
+>>>>>>> 769e80c07d40e4d90988c562afa97301d7cf07ca
 from api.update_data import (
     update_data, get_last_update_timestamp, get_data_age_days, auto_update_if_needed
 )
@@ -424,12 +428,16 @@ with st.sidebar:
 
     update_msg  = st.session_state.get("last_update_msg", "")
     update_src  = st.session_state.get("last_update_src", "")
+<<<<<<< HEAD
     src_icon    = "🌐" if update_src == "sportmonks_api" else "🔧" if update_src == "simulated" else ""
 
     # Colour-code HTTP status
     http_code  = api_status.get("http_code")
     code_color = "#00FF88" if http_code == 200 else "#FF4444" if http_code in (401, 403) else "#FFD700"
     code_label = f"HTTP {http_code}" if http_code else "no response"
+=======
+    src_icon    = "🌐" if update_src == "api" else "🔧" if update_src == "simulated" else ""
+>>>>>>> 769e80c07d40e4d90988c562afa97301d7cf07ca
 
     st.markdown(f"""
     <div style="margin-top:8px;">
@@ -439,6 +447,7 @@ with st.sidebar:
             {age_label}
         </span>
         <div style="font-size:0.63rem; color:rgba(255,255,255,0.35); margin-top:5px; line-height:1.5;">
+<<<<<<< HEAD
             <b style="color:rgba(255,255,255,0.55);">Status:</b>
             <span style="color:{code_color};">{code_label}</span>
             &nbsp;·&nbsp;{api_status.get('latency_ms', 0):.0f}ms<br/>
@@ -448,6 +457,8 @@ with st.sidebar:
             </span>
         </div>
         <div style="font-size:0.63rem; color:rgba(255,255,255,0.35); margin-top:4px;">
+=======
+>>>>>>> 769e80c07d40e4d90988c562afa97301d7cf07ca
             <b style="color:rgba(255,255,255,0.55);">Last Updated:</b><br/>
             {last_update_ts}
         </div>
@@ -456,6 +467,7 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
+<<<<<<< HEAD
     # ── Expandable debug panel ────────────────────────────────────────────
     with st.expander("🔍 API Debug", expanded=not api_status["available"]):
         diag = diagnose_api()
@@ -484,6 +496,8 @@ with st.sidebar:
                 with st.expander("Raw API response", expanded=False):
                     st.code(diag["detail"], language=None)
 
+=======
+>>>>>>> 769e80c07d40e4d90988c562afa97301d7cf07ca
     # ── Auto-update banner (stale data warning) ───────────────────────────
     if age_days is not None and age_days >= 7:
         st.markdown("""
