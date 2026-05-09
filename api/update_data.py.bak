@@ -1,0 +1,525 @@
+"""
+api/update_data.py
+──────────────────
+TRUE semi-real-time update engine for SportsPulse.
+
+Pipeline per sport:
+  1. fetch_from_api()      — try live sports API (graceful fallback on failure)
+  2. simulate_update()     — realistic stat increments when API unavailable
+  3. merge_data()          — safe, non-destructive merge into existing CSV
+  4. update_data()         — orchestrates the full pipeline & persists to disk
+  5. auto_update_if_needed() — weekly scheduler check (cron-friendly)
+
+Data integrity guarantees
+  • No duplicate player rows (merge on player_id)
+  • Historical season columns are NEVER decremented
+  • last_updated column tracks per-player freshness
+  • A timestamped backup CSV is written before every save
+"""
+
+from __future__ import annotations
+
+import os
+import random
+import hashlib
+import logging
+import datetime
+import shutil
+
+import pandas as pd
+import numpy as np
+
+logger = logging.getLogger(__name__)
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
+_HERE      = os.path.dirname(os.path.abspath(__file__))
+_DATA_DIR  = os.path.join(_HERE, "..", "data")
+_BACKUP_DIR = os.path.join(_DATA_DIR, "backups")
+
+CRICKET_CSV  = os.path.join(_DATA_DIR, "cricket.csv")
+FOOTBALL_CSV = os.path.join(_DATA_DIR, "football.csv")
+
+# ── Simulated API endpoint stubs ─────────────────────────────────────────────
+_API_ENDPOINTS = {
+    "cricket":  "https://api.cricketdata.org/api/v2/recent",
+    "football": "https://v3.football.api-sports.io/players/statistics",
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. FETCH FROM API
+# ─────────────────────────────────────────────────────────────────────────────
+
+def fetch_from_api(sport: str, df: pd.DataFrame) -> pd.DataFrame | None:
+    """
+    Attempt to pull fresh player stats from a live sports API.
+
+    Returns a DataFrame with the same schema as the source CSV if successful,
+    or None on any failure (timeout, bad key, network error).
+
+    Production wiring
+    -----------------
+    Uncomment the `requests` block below and set env vars:
+      CRICKET_API_KEY  or  FOOTBALL_API_KEY
+
+    The API is expected to return JSON shaped like:
+      {"players": [{"player_id": "P001", "matches": 502, "runs": 24055, ...}, ...]}
+    """
+    # ── Uncomment for real API ────────────────────────────────────────────────
+    # import requests
+    # key_env = "CRICKET_API_KEY" if sport == "cricket" else "FOOTBALL_API_KEY"
+    # api_key = os.getenv(key_env, "")
+    # if not api_key:
+    #     logger.warning("No API key configured for %s — skipping live fetch.", sport)
+    #     return None
+    # try:
+    #     resp = requests.get(
+    #         _API_ENDPOINTS[sport],
+    #         headers={"x-apisports-key": api_key},
+    #         timeout=6,
+    #     )
+    #     resp.raise_for_status()
+    #     raw = resp.json().get("players", [])
+    #     if not raw:
+    #         return None
+    #     return pd.DataFrame(raw)
+    # except Exception as exc:
+    #     logger.warning("API fetch failed for %s: %s", sport, exc)
+    #     return None
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # Simulated failure: no API key in demo mode
+    logger.info("API unavailable — falling back to simulate_update() for %s.", sport)
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. SIMULATE UPDATE
+# ─────────────────────────────────────────────────────────────────────────────
+
+def simulate_update(sport: str, df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Generate realistic incremental stat deltas for every player.
+
+    Determinism: seed = player_id  +  current ISO-week so the same
+    update call within the same calendar week yields identical deltas.
+    This prevents runaway stat inflation on repeated clicks.
+
+    Cricket deltas (per update cycle ≈ 1 week of matches)
+      matches   +1 to +3
+      innings   +1 to +3  (batters / all-rounders / keepers)
+      runs      +0 to +180  (scaled by batting average)
+      wickets   +0 to +8   (bowlers / all-rounders)
+      economy   tiny float drift
+      average   re-derived from runs / innings
+      strike_rate tiny drift
+      form_score drift ±4, clamped [50, 100]
+      2024_runs  += same run delta as above
+
+    Football deltas (per update cycle)
+      matches   +1 to +2
+      goals     +0 to +3  (forwards), +0 to +1  (mids), 0 (def/gk)
+      assists   +0 to +2
+      pass_acc  tiny drift ±0.5
+      xG / xA   tiny drift ±0.05
+      clean_sheets +0/+1  (goalkeepers)
+      saves     +0 to +5  (goalkeepers)
+      form_score drift ±4, clamped [50, 100]
+      2024_goals += same goal delta
+    """
+    week_seed = f"{datetime.date.today().isocalendar()[0]}{datetime.date.today().isocalendar()[1]}"
+    updated   = df.copy()
+
+    for idx, row in updated.iterrows():
+        pid   = str(row.get("player_id", idx))
+        seed  = int(hashlib.md5(f"{pid}{week_seed}".encode()).hexdigest()[:8], 16)
+        rng   = random.Random(seed)
+
+        # ── Cricket ───────────────────────────────────────────────────────────
+        if sport == "cricket":
+            role = str(row.get("role", "Batsman"))
+
+            # Matches played this cycle
+            new_matches = int(row["matches"]) + rng.randint(1, 3)
+            updated.at[idx, "matches"] = new_matches
+
+            # Innings (only for bat-capable roles)
+            if role in ("Batsman", "All-Rounder", "Wicket-Keeper"):
+                new_innings = int(row["innings"]) + rng.randint(1, 3)
+                updated.at[idx, "innings"] = new_innings
+
+                # Runs scored this cycle
+                avg = float(row.get("average", 30))
+                run_delta = int(rng.gauss(avg * 1.2, avg * 0.5))
+                run_delta = max(0, min(run_delta, 250))
+                new_runs  = int(row["runs"]) + run_delta
+                updated.at[idx, "runs"] = new_runs
+
+                # 2024 season column
+                prev_2024 = int(row.get("2024_runs", 0))
+                updated.at[idx, "2024_runs"] = prev_2024 + run_delta
+
+                # Re-derive average (guard against zero innings)
+                if new_innings > 0:
+                    updated.at[idx, "average"] = round(new_runs / new_innings, 2)
+
+                # Strike-rate micro-drift
+                sr_drift = rng.uniform(-1.5, 1.5)
+                updated.at[idx, "strike_rate"] = round(
+                    max(40.0, float(row.get("strike_rate", 80)) + sr_drift), 1
+                )
+
+            # Wickets (only for bowling roles)
+            if role in ("Bowler", "All-Rounder"):
+                wkt_delta = rng.randint(0, 8)
+                updated.at[idx, "wickets"] = int(row.get("wickets", 0)) + wkt_delta
+
+                # Economy micro-drift
+                eco_drift = rng.uniform(-0.1, 0.1)
+                updated.at[idx, "economy"] = round(
+                    max(2.0, float(row.get("economy", 4)) + eco_drift), 2
+                )
+
+        # ── Football ──────────────────────────────────────────────────────────
+        elif sport == "football":
+            position = str(row.get("position", "Forward"))
+
+            new_matches = int(row["matches"]) + rng.randint(1, 2)
+            updated.at[idx, "matches"] = new_matches
+
+            if position == "Goalkeeper":
+                cs_delta   = rng.randint(0, 1)
+                sv_delta   = rng.randint(0, 5)
+                updated.at[idx, "clean_sheets"] = int(row.get("clean_sheets", 0)) + cs_delta
+                updated.at[idx, "saves"]        = int(row.get("saves", 0)) + sv_delta
+            else:
+                # Goals
+                if position == "Forward":
+                    g_delta = rng.randint(0, 3)
+                elif position == "Midfielder":
+                    g_delta = rng.randint(0, 1)
+                else:                          # Defender
+                    g_delta = rng.randint(0, 0)
+
+                a_delta = rng.randint(0, 2) if position != "Defender" else rng.randint(0, 1)
+
+                updated.at[idx, "goals"]   = int(row["goals"]) + g_delta
+                updated.at[idx, "assists"] = int(row["assists"]) + a_delta
+
+                # 2024 season column
+                updated.at[idx, "2024_goals"] = int(row.get("2024_goals", 0)) + g_delta
+
+                # xG / xA micro-drift
+                xg_drift = rng.uniform(-0.03, 0.03)
+                xa_drift = rng.uniform(-0.02, 0.02)
+                updated.at[idx, "xG"] = round(
+                    max(0.0, float(row.get("xG", 0)) + xg_drift), 3
+                )
+                updated.at[idx, "xA"] = round(
+                    max(0.0, float(row.get("xA", 0)) + xa_drift), 3
+                )
+
+                # Pass accuracy micro-drift
+                pa_drift = rng.uniform(-0.5, 0.5)
+                updated.at[idx, "pass_accuracy"] = round(
+                    max(60.0, min(99.0, float(row.get("pass_accuracy", 80)) + pa_drift)), 1
+                )
+
+        # ── Shared: form_score drift (all sports) ─────────────────────────────
+        form_drift = rng.uniform(-4.0, 4.0)
+        updated.at[idx, "form_score"] = round(
+            max(50.0, min(100.0, float(row.get("form_score", 75)) + form_drift)), 1
+        )
+
+    return updated
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. MERGE DATA
+# ─────────────────────────────────────────────────────────────────────────────
+
+def merge_data(
+    existing: pd.DataFrame,
+    fresh: pd.DataFrame,
+    id_col: str = "player_id",
+) -> pd.DataFrame:
+    """
+    Safe, non-destructive merge of `fresh` stats into `existing` dataset.
+
+    Rules
+    -----
+    • Primary key: player_id
+    • Numeric fields from `fresh` only replace existing values when
+      fresh_value > existing_value  (stats never go backwards)
+    • String / categorical fields (team, role, nationality…) are preserved
+      from `existing` unless `fresh` has an explicit non-null override
+    • Rows in `existing` with no match in `fresh` are kept unchanged
+    • Rows in `fresh` with no match in `existing` are IGNORED
+      (we don't add unknown players from a potentially bad API response)
+    • last_updated is set to now() for every merged row
+    """
+    if fresh is None or fresh.empty:
+        return existing
+
+    existing = existing.copy()
+    now_ts   = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Identify numeric columns that should only increase
+    _MONOTONE_CRICKET  = {"matches", "innings", "runs", "wickets",
+                          "hundreds", "fifties", "catches", "stumpings",
+                          "2019_runs", "2020_runs", "2021_runs",
+                          "2022_runs", "2023_runs", "2024_runs"}
+    _MONOTONE_FOOTBALL = {"matches", "goals", "assists", "clean_sheets",
+                          "saves", "2019_goals", "2020_goals", "2021_goals",
+                          "2022_goals", "2023_goals", "2024_goals"}
+    monotone = _MONOTONE_CRICKET | _MONOTONE_FOOTBALL
+
+    # Float columns that can drift either direction
+    _DRIFTABLE = {"average", "strike_rate", "bowling_avg", "economy",
+                  "pass_accuracy", "xG", "xA", "shots_per_game",
+                  "form_score"}
+
+    existing.set_index(id_col, inplace=True)
+    fresh_indexed = fresh.set_index(id_col) if id_col in fresh.columns else None
+
+    if fresh_indexed is not None:
+        for pid in existing.index:
+            if pid not in fresh_indexed.index:
+                continue
+            fresh_row = fresh_indexed.loc[pid]
+            for col in fresh_row.index:
+                if col not in existing.columns:
+                    continue
+                fval = fresh_row[col]
+                oval = existing.at[pid, col]
+
+                if col in monotone:
+                    try:
+                        existing.at[pid, col] = max(int(oval), int(fval))
+                    except (TypeError, ValueError):
+                        pass
+                elif col in _DRIFTABLE:
+                    try:
+                        existing.at[pid, col] = round(float(fval), 3)
+                    except (TypeError, ValueError):
+                        pass
+                # string / categorical columns: keep existing value
+
+    existing.reset_index(inplace=True)
+    existing["last_updated"] = now_ts
+    return existing
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. UPDATE DATA  (main orchestrator)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def update_data(sport: str) -> dict:
+    """
+    Full update pipeline for a given sport.
+
+    Steps
+    -----
+    1. Load existing CSV from disk
+    2. Try live API → get fresh DataFrame (or None)
+    3. If API failed → simulate realistic deltas instead
+    4. Merge fresh/simulated data into existing (safe, monotone)
+    5. Write timestamped backup of the previous CSV
+    6. Save updated CSV back to disk
+    7. Return a result dict with status, source, and row count
+
+    Returns
+    -------
+    {
+        "success":   bool,
+        "source":    "api" | "simulated",
+        "sport":     str,
+        "rows":      int,
+        "timestamp": str,
+        "message":   str,
+        "error":     str | None,
+    }
+    """
+    csv_path = CRICKET_CSV if sport == "cricket" else FOOTBALL_CSV
+    now_str  = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    try:
+        # 1. Load existing data ────────────────────────────────────────────────
+        if not os.path.exists(csv_path):
+            return _error_result(sport, "CSV file not found.", now_str)
+
+        existing_df = pd.read_csv(csv_path)
+        existing_df = existing_df.fillna(0)
+
+        # 2. Try API ──────────────────────────────────────────────────────────
+        api_df = fetch_from_api(sport, existing_df)
+        source = "api"
+
+        # 3. Fallback to simulation ────────────────────────────────────────────
+        if api_df is None:
+            api_df = simulate_update(sport, existing_df)
+            source = "simulated"
+
+        # 4. Merge ─────────────────────────────────────────────────────────────
+        merged_df = merge_data(existing_df, api_df)
+
+        # 5. Backup ────────────────────────────────────────────────────────────
+        _write_backup(csv_path, sport)
+
+        # 6. Save ──────────────────────────────────────────────────────────────
+        merged_df.to_csv(csv_path, index=False)
+
+        logger.info(
+            "update_data[%s]: %d rows updated from %s at %s",
+            sport, len(merged_df), source, now_str,
+        )
+
+        return {
+            "success":   True,
+            "source":    source,
+            "sport":     sport,
+            "rows":      len(merged_df),
+            "timestamp": now_str,
+            "message":   (
+                f"✅ {sport.title()} data updated from {'Live API' if source == 'api' else 'Simulation'} "
+                f"— {len(merged_df)} players refreshed."
+            ),
+            "error":     None,
+        }
+
+    except Exception as exc:
+        logger.exception("update_data[%s] failed: %s", sport, exc)
+        return _error_result(sport, str(exc), now_str)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. WEEKLY AUTO-UPDATE
+# ─────────────────────────────────────────────────────────────────────────────
+
+def auto_update_if_needed(sport: str, max_age_days: int = 7) -> dict | None:
+    """
+    Automatically trigger update_data() if the dataset is stale.
+
+    Staleness check:
+      Reads the `last_updated` column from the CSV.
+      If the most recent timestamp is older than `max_age_days`, updates.
+
+    Returns the result dict from update_data(), or None if data is fresh.
+
+    Cron integration (run daily, updates only when needed)
+    -------------------------------------------------------
+    Add this to your crontab with:
+        crontab -e
+    Then add the line:
+        0 6 * * * /usr/bin/python3 /path/to/sports_profiler/api/update_data.py
+    -------------------------------------------------------
+    """
+    csv_path = CRICKET_CSV if sport == "cricket" else FOOTBALL_CSV
+
+    try:
+        df = pd.read_csv(csv_path)
+        if "last_updated" not in df.columns:
+            # Never been updated — run now
+            return update_data(sport)
+
+        latest_str = df["last_updated"].dropna().max()
+        if pd.isna(latest_str) or latest_str == 0:
+            return update_data(sport)
+
+        latest_dt = datetime.datetime.strptime(str(latest_str), "%Y-%m-%d %H:%M:%S")
+        age_days  = (datetime.datetime.now() - latest_dt).days
+
+        if age_days >= max_age_days:
+            logger.info(
+                "auto_update_if_needed[%s]: data is %d days old — running update.",
+                sport, age_days
+            )
+            return update_data(sport)
+
+        logger.info(
+            "auto_update_if_needed[%s]: data is %d days old — still fresh, skipping.",
+            sport, age_days
+        )
+        return None
+
+    except Exception as exc:
+        logger.warning("auto_update_if_needed[%s] staleness check failed: %s", sport, exc)
+        return update_data(sport)  # safe fallback: update anyway
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# INTERNAL HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_last_update_timestamp(sport: str) -> str:
+    """
+    Read the most recent `last_updated` timestamp from the CSV.
+    Returns a human-readable string, or 'Never' if unavailable.
+    """
+    csv_path = CRICKET_CSV if sport == "cricket" else FOOTBALL_CSV
+    try:
+        df = pd.read_csv(csv_path, usecols=["last_updated"])
+        latest = df["last_updated"].dropna().max()
+        if pd.isna(latest) or latest == 0:
+            return "Never"
+        return str(latest)
+    except Exception:
+        return "Never"
+
+
+def get_data_age_days(sport: str) -> int | None:
+    """Return how many days since the last update, or None if unknown."""
+    ts = get_last_update_timestamp(sport)
+    if ts == "Never":
+        return None
+    try:
+        dt  = datetime.datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+        return (datetime.datetime.now() - dt).days
+    except Exception:
+        return None
+
+
+def _write_backup(csv_path: str, sport: str) -> None:
+    """Write a timestamped backup of the CSV before overwriting."""
+    os.makedirs(_BACKUP_DIR, exist_ok=True)
+    ts_file = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_name = f"{sport}_{ts_file}.csv"
+    backup_path = os.path.join(_BACKUP_DIR, backup_name)
+    shutil.copy2(csv_path, backup_path)
+
+    # Keep only the 10 most recent backups per sport
+    all_backups = sorted(
+        [f for f in os.listdir(_BACKUP_DIR) if f.startswith(sport)],
+        reverse=True,
+    )
+    for old in all_backups[10:]:
+        try:
+            os.remove(os.path.join(_BACKUP_DIR, old))
+        except OSError:
+            pass
+
+
+def _error_result(sport: str, error: str, ts: str) -> dict:
+    return {
+        "success":   False,
+        "source":    "none",
+        "sport":     sport,
+        "rows":      0,
+        "timestamp": ts,
+        "message":   f"❌ Update failed for {sport}: {error}",
+        "error":     error,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLI entry-point  (python api/update_data.py cricket)
+# ─────────────────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    import sys
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    sport_arg = sys.argv[1] if len(sys.argv) > 1 else "cricket"
+    if sport_arg not in ("cricket", "football"):
+        print("Usage: python update_data.py [cricket|football]")
+        sys.exit(1)
+    result = update_data(sport_arg)
+    print(result["message"])
+    sys.exit(0 if result["success"] else 1)

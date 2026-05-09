@@ -1,0 +1,21 @@
+player_id,name,team,position,nationality,age,matches,goals,assists,pass_accuracy,xG,xA,shots_per_game,key_passes,dribbles,tackles,interceptions,clean_sheets,saves,form_score,market_value,2019_goals,2020_goals,2021_goals,2022_goals,2023_goals,2024_goals,pace,shooting,passing,dribbling,defending,physical
+F001,Lionel Messi,Inter Miami,Forward,Argentine,37,900,812,350,87.5,0.82,0.45,5.8,4.2,8.5,1.2,0.8,0,0,95,180000000,50,38,35,18,21,12,85,95,92,96,35,68
+F002,Cristiano Ronaldo,Al Nassr,Forward,Portuguese,39,950,900,250,83.2,0.78,0.28,6.5,2.8,5.2,1.5,0.9,0,0,90,120000000,30,34,25,18,54,35,82,95,78,80,28,82
+F003,Kylian Mbappe,Real Madrid,Forward,French,26,550,300,180,84.5,0.85,0.42,5.5,3.5,7.8,1.8,1.1,0,0,92,200000000,39,42,28,40,52,38,97,92,80,88,36,78
+F004,Erling Haaland,Man City,Forward,Norwegian,24,420,280,95,78.5,1.12,0.28,6.2,2.2,4.5,1.2,0.8,0,0,91,200000000,0,0,27,29,52,36,89,95,62,72,38,88
+F005,Vinicius Jr,Real Madrid,Forward,Brazilian,24,350,180,145,84.2,0.68,0.48,4.8,3.8,9.5,1.5,0.9,0,0,90,180000000,10,18,22,22,24,20,95,85,78,92,32,72
+F006,Kevin De Bruyne,Man City,Midfielder,Belgian,33,480,100,280,91.5,0.32,0.58,3.2,6.8,4.2,3.8,2.5,0,0,88,100000000,11,12,9,15,7,8,72,80,95,80,62,78
+F007,Luka Modric,Real Madrid,Midfielder,Croatian,39,820,95,160,92.8,0.18,0.35,2.2,5.5,5.8,4.5,3.2,0,0,82,25000000,8,5,7,5,4,3,68,75,94,86,72,72
+F008,Jude Bellingham,Real Madrid,Midfielder,English,21,280,65,85,88.2,0.42,0.38,3.5,4.8,5.5,5.5,3.8,0,0,91,180000000,0,0,10,14,22,18,80,85,88,82,72,85
+F009,Rodri,Man City,Midfielder,Spanish,28,380,25,65,94.5,0.12,0.22,1.8,3.5,3.8,7.5,5.8,0,0,88,120000000,2,3,5,4,8,6,70,68,92,72,88,88
+F010,Virgil van Dijk,Liverpool,Defender,Dutch,33,450,52,18,90.2,0.08,0.05,0.8,1.2,0.5,8.5,6.5,0,0,85,70000000,5,3,4,5,2,3,78,52,82,62,92,92
+F011,Trent Alexander-Arnold,Liverpool,Defender,English,26,350,22,95,88.5,0.12,0.42,1.5,4.5,3.5,4.5,3.5,0,0,86,80000000,4,2,5,6,8,5,72,65,92,72,70,72
+F012,Alisson Becker,Liverpool,Goalkeeper,Brazilian,32,350,1,2,72.5,0,0,0.2,0.5,0,1.2,0.8,145,820,88,70000000,0,0,0,0,0,0,55,22,82,0,0,78
+F013,Manuel Neuer,Bayern Munich,Goalkeeper,German,38,700,0,1,68.5,0,0,0.1,0.3,0,1.5,1.0,280,1050,80,25000000,0,0,0,0,0,0,58,25,78,0,0,80
+F014,Pedri,Barcelona,Midfielder,Spanish,22,250,28,68,93.5,0.22,0.38,2.5,5.5,6.5,4.8,3.8,0,0,88,120000000,0,0,6,10,8,5,72,72,94,88,65,72
+F015,Bukayo Saka,Arsenal,Forward,English,23,280,80,95,85.5,0.48,0.45,4.2,4.5,5.5,2.8,2.2,0,0,90,150000000,0,5,12,14,20,18,82,82,85,86,52,72
+F016,Mohamed Salah,Liverpool,Forward,Egyptian,32,500,260,120,84.5,0.75,0.38,5.5,3.8,6.2,2.2,1.5,0,0,88,80000000,22,19,22,30,28,24,90,88,80,88,40,75
+F017,Son Heung-min,Tottenham,Forward,South Korean,32,450,185,75,82.5,0.55,0.32,4.8,3.2,5.5,2.5,1.8,0,0,85,65000000,20,18,22,23,17,15,88,85,78,84,38,72
+F018,Ruben Dias,Man City,Defender,Portuguese,27,320,8,5,90.8,0.06,0.04,0.6,0.8,0.8,8.8,6.8,0,0,86,80000000,0,0,1,2,2,2,76,55,86,65,92,88
+F019,Harry Kane,Bayern Munich,Forward,English,31,550,295,150,81.5,0.82,0.38,6.2,4.2,3.8,1.8,1.2,0,0,88,100000000,25,24,23,27,30,36,72,94,80,72,40,82
+F020,Phil Foden,Man City,Midfielder,English,24,350,80,95,88.5,0.42,0.45,3.8,4.8,6.5,3.5,2.8,0,0,89,150000000,0,7,12,10,14,19,85,82,88,90,52,72
